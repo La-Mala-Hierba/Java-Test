@@ -471,11 +471,159 @@ public class WarehouseTest {
     
     private ShipmentInfo findBestRoute(List<Warehouse> warehouses, Order order, BoxType box)
         throws NoSuitableWarehouseException {
-      return null;
+
+      List<ShipmentInfo> shipmentInfos = new ArrayList<>();
+
+      for (Warehouse warehouse : warehouses) {
+
+        //get carrierTime
+        CarrierTime carrierTime = null;
+        List<CarrierTime> list = times.stream().filter(time -> order.getTargetState().equals(time.getTargetState()))
+                .filter(time -> time.getWarehouse().equals(warehouse)).collect(Collectors.toList());
+        if(list.size() == 1){
+          carrierTime = list.get(0);
+        }else {
+          throw new RuntimeException("Error about carrierTime");
+        }
+
+        //get shippingHour
+        LocalDateTime startDate = order.getOrderDate().plusHours(PACKAGE_PREPARATION_HOURS);
+        startDate = startDate.plusHours(carrierTime.getWarehouse().getTimeZoneOffset());
+        DayOfWeek dayOfWeek = startDate.getDayOfWeek();
+        LocalTime startLocalTime = startDate.toLocalTime();
+
+        List<DepartureTime> departureTimeList = departures.stream().filter(departureTime -> departureTime.getTargetState().equals(order.getTargetState()))
+                .filter(departureTime -> departureTime.getWarehouse().equals(warehouse)).collect(Collectors.toList());
+        DepartureTime departureTime = null;
+        if (departureTimeList.size() == 1){
+          departureTime = departureTimeList.get(0);
+        }else {
+          throw new RuntimeException("Error about departureTime");
+        }
+
+        List<ShippingHour> shippingHourList = departureTime.getShippingHours();
+        ShippingHour shippingHour = null;
+        if (shippingHourList == null || shippingHourList.size() == 0){
+          throw new RuntimeException("Error about shippingHour");
+        }else if (shippingHourList.size() == 1){
+          shippingHour = shippingHourList.get(0);
+        }else {
+          List<ShippingHour> hourList1 = new ArrayList<>();
+          List<ShippingHour> hourList2 = new ArrayList<>();
+          for (ShippingHour hour : shippingHourList) {
+            if (hour.getDay().getValue() > dayOfWeek.getValue() || (hour.getDay().getValue() == dayOfWeek.getValue() && hour.getTime().isAfter(startLocalTime))){
+              hourList1.add(hour);
+            }else {
+              hourList2.add(hour);
+            }
+
+            if (hourList1 == null || hourList1.size() == 0){
+              if (hourList2.size() == 1){
+                shippingHour = hourList2.get(0);
+              }else {
+                Collections.sort(hourList2, new Comparator<ShippingHour>() {
+                  @Override
+                  public int compare(ShippingHour o1, ShippingHour o2) {
+                    return o1.getDay().getValue() - o2.getDay().getValue();
+                  }
+                });
+                shippingHour = hourList2.get(0);
+              }
+            }else if (hourList1.size() == 1){
+              shippingHour = hourList1.get(0);
+            }else {
+              Collections.sort(hourList1, new Comparator<ShippingHour>() {
+                @Override
+                public int compare(ShippingHour o1, ShippingHour o2) {
+                  return o1.getDay().getValue() - o2.getDay().getValue();
+                }
+              });
+              shippingHour = hourList1.get(0);
+            }
+          }
+        }
+
+        //get carrierPricing
+        CarrierPricing carrierPricing = null;
+        List<CarrierPricing> pricingList = pricings.stream().filter(price -> price.getTargetState().equals(order.getTargetState()))
+                .filter(price -> price.getWarehouse().equals(warehouse)).collect(Collectors.toList());
+        if (pricingList == null || pricingList.size() != 1){
+          throw new RuntimeException("Error on CarrierPricing");
+        }else {
+          carrierPricing = pricingList.get(0);
+        }
+
+        //get shippingPrice
+        float shippingPrice = box.getVolume() * carrierPricing.getVolumePrice();
+        //get shippingExperiencePrice
+        LocalDateTime deliveryDateTime = this.getDeliveryDateTime(order.getOrderDate(), shippingHour, carrierTime);
+        //get shipmentInfo
+        ShipmentInfo shipmentInfo = new ShipmentInfo(order, warehouse, deliveryDateTime, box.getBoxType(), shippingPrice);
+
+        shipmentInfos.add(shipmentInfo);
+      }
+
+      if (shipmentInfos.size() == 1){
+        return shipmentInfos.get(0);
+      }else {
+        Collections.sort(shipmentInfos, new Comparator<ShipmentInfo>() {
+          @Override
+          public int compare(ShipmentInfo o1, ShipmentInfo o2) {
+            if (o1.getTotalPrice() == o2.getTotalPrice()){
+              Stock stock1 = stocks.stream().filter(stock -> stock.getItemId().equals(o1.getItemId())).filter(stock -> stock.getWarehouse().equals(o1.getWarehouse())).collect(Collectors.toList()).get(0);
+              Stock stock2 = stocks.stream().filter(stock -> stock.getItemId().equals(o2.getItemId())).filter(stock -> stock.getWarehouse().equals(o2.getWarehouse())).collect(Collectors.toList()).get(0);
+              return stock2.getStock() - stock1.getStock();
+            }
+            return o1.getTotalPrice().compareTo(o2.getTotalPrice());
+          }
+        });
+        return shipmentInfos.get(0);
+      }
+
     }
     
     private BoxType findBestBoxType(Order order) throws NoSuitableBoxException {
-      return null;
+      //itemId -> Item
+      Item itemSelected = null;
+      for (Item item : items) {
+        if (item.getItemId().equals(order.getItemId())){
+          itemSelected = item;
+          break;
+        }
+      }
+
+      //get item's properties
+      int itemWeight = itemSelected.getWeight();
+      int itemLength = itemSelected.getLength();
+      int itemWidth = itemSelected.getWidth();
+      int itemHeight = itemSelected.getHeight();
+      int[] itemArray = {itemLength, itemWidth, itemHeight};
+      Arrays.sort(itemArray);
+
+      //forEach boxTypes, create an ArrayList to collect those which could hold the item
+      List<BoxType> list = new ArrayList<>();
+      boxTypes.forEach(boxType -> {
+        int[] boxArray = {boxType.getLength(), boxType.getWidth(), boxType.getHeight()};
+        Arrays.sort(boxArray);
+        if (itemWeight <= boxType.getMaxWeight() && itemArray[0] <= boxArray[0] && itemArray[1] <= boxArray[1] && itemArray[2] <= boxArray[2]){
+          list.add(boxType);
+        }
+      });
+
+      //select the best BoxType
+      if (list == null || list.size() == 0){
+        throw new NoSuitableBoxException(order.getItemId());
+      }else if (list.size() == 1){
+        return list.get(0);
+      }else {
+        Collections.sort(list, new Comparator<BoxType>() {
+          @Override
+          public int compare(BoxType o1, BoxType o2) {
+            return (int)(o1.getVolume()-o2.getVolume());
+          }
+        });
+        return list.get(0);
+      }
     }
 
     private LocalDateTime getDeliveryDateTime(LocalDateTime orderDate, ShippingHour shippingHour, CarrierTime time) {
