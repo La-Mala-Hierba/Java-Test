@@ -12,11 +12,7 @@ import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
 import java.time.temporal.TemporalAdjusters;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collections;
-import java.util.Comparator;
-import java.util.List;
+import java.util.*;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -477,14 +473,14 @@ public class WarehouseTest {
       for (Warehouse warehouse : warehouses) {
 
         //get carrierTime
-        CarrierTime carrierTime = null;
-        List<CarrierTime> list = times.stream().filter(time -> order.getTargetState().equals(time.getTargetState()))
-                .filter(time -> time.getWarehouse().equals(warehouse)).collect(Collectors.toList());
-        if(list.size() == 1){
-          carrierTime = list.get(0);
-        }else {
+       Optional<CarrierTime> optionalCarrierTime = times.stream().
+               filter(time -> order.getTargetState().equals(time.getTargetState()))
+                .filter(time -> time.getWarehouse().equals(warehouse)).findFirst();
+        if (!optionalCarrierTime.isPresent()){
           throw new RuntimeException("Error about carrierTime");
         }
+
+        CarrierTime carrierTime = optionalCarrierTime.get();
 
         //get shippingHour
         LocalDateTime startDate = order.getOrderDate().plusHours(PACKAGE_PREPARATION_HOURS);
@@ -492,14 +488,13 @@ public class WarehouseTest {
         DayOfWeek dayOfWeek = startDate.getDayOfWeek();
         LocalTime startLocalTime = startDate.toLocalTime();
 
-        List<DepartureTime> departureTimeList = departures.stream().filter(departureTime -> departureTime.getTargetState().equals(order.getTargetState()))
-                .filter(departureTime -> departureTime.getWarehouse().equals(warehouse)).collect(Collectors.toList());
-        DepartureTime departureTime = null;
-        if (departureTimeList.size() == 1){
-          departureTime = departureTimeList.get(0);
-        }else {
+        Optional<DepartureTime> optionalDepartureTime = departures.stream().
+                filter(departureTime -> departureTime.getTargetState().equals(order.getTargetState()))
+                .filter(departureTime -> departureTime.getWarehouse().equals(warehouse)).findFirst();
+        if (!optionalCarrierTime.isPresent()){
           throw new RuntimeException("Error about departureTime");
         }
+        DepartureTime departureTime = optionalDepartureTime.get();
 
         List<ShippingHour> shippingHourList = departureTime.getShippingHours();
         ShippingHour shippingHour = null;
@@ -521,37 +516,29 @@ public class WarehouseTest {
               if (hourList2.size() == 1){
                 shippingHour = hourList2.get(0);
               }else {
-                Collections.sort(hourList2, new Comparator<ShippingHour>() {
-                  @Override
-                  public int compare(ShippingHour o1, ShippingHour o2) {
-                    return o1.getDay().getValue() - o2.getDay().getValue();
-                  }
-                });
+                Collections.sort(hourList2, (o1, o2) -> o1.getDay().getValue() - o2.getDay().getValue());
                 shippingHour = hourList2.get(0);
               }
             }else if (hourList1.size() == 1){
               shippingHour = hourList1.get(0);
             }else {
-              Collections.sort(hourList1, new Comparator<ShippingHour>() {
-                @Override
-                public int compare(ShippingHour o1, ShippingHour o2) {
-                  return o1.getDay().getValue() - o2.getDay().getValue();
-                }
-              });
+              Collections.sort(hourList1, (o1, o2) -> o1.getDay().getValue() - o2.getDay().getValue());
               shippingHour = hourList1.get(0);
             }
           }
         }
 
         //get carrierPricing
-        CarrierPricing carrierPricing = null;
-        List<CarrierPricing> pricingList = pricings.stream().filter(price -> price.getTargetState().equals(order.getTargetState()))
-                .filter(price -> price.getWarehouse().equals(warehouse)).collect(Collectors.toList());
-        if (pricingList == null || pricingList.size() != 1){
+
+        Optional<CarrierPricing> optionalCarrierPricing = pricings.stream()
+                .filter(price -> price.getTargetState().equals(order.getTargetState()))
+                .filter(price -> price.getWarehouse().equals(warehouse)).findFirst();
+
+        if (!optionalCarrierPricing.isPresent()){
           throw new RuntimeException("Error on CarrierPricing");
-        }else {
-          carrierPricing = pricingList.get(0);
         }
+
+        CarrierPricing carrierPricing = optionalCarrierPricing.get();
 
         //get shippingPrice
         float shippingPrice = box.getVolume() * carrierPricing.getVolumePrice();
@@ -570,8 +557,12 @@ public class WarehouseTest {
           @Override
           public int compare(ShipmentInfo o1, ShipmentInfo o2) {
             if (o1.getTotalPrice() == o2.getTotalPrice()){
-              Stock stock1 = stocks.stream().filter(stock -> stock.getItemId().equals(o1.getItemId())).filter(stock -> stock.getWarehouse().equals(o1.getWarehouse())).collect(Collectors.toList()).get(0);
-              Stock stock2 = stocks.stream().filter(stock -> stock.getItemId().equals(o2.getItemId())).filter(stock -> stock.getWarehouse().equals(o2.getWarehouse())).collect(Collectors.toList()).get(0);
+
+              Stock stock1 = stocks.stream().filter(stock -> stock.getItemId().equals(o1.getItemId()))
+                      .filter(stock -> stock.getWarehouse().equals(o1.getWarehouse())).findFirst().get();
+              Stock stock2 = stocks.stream().filter(stock -> stock.getItemId().equals(o2.getItemId()))
+                      .filter(stock -> stock.getWarehouse().equals(o2.getWarehouse())).findFirst().get();
+
               return stock2.getStock() - stock1.getStock();
             }
             return o1.getTotalPrice().compareTo(o2.getTotalPrice());
@@ -611,17 +602,12 @@ public class WarehouseTest {
       });
 
       //select the best BoxType
-      if (list == null || list.size() == 0){
+      if (list.size() == 0){
         throw new NoSuitableBoxException(order.getItemId());
       }else if (list.size() == 1){
         return list.get(0);
       }else {
-        Collections.sort(list, new Comparator<BoxType>() {
-          @Override
-          public int compare(BoxType o1, BoxType o2) {
-            return (int)(o1.getVolume()-o2.getVolume());
-          }
-        });
+        list.sort((o1, o2) -> (int) (o1.getVolume() - o2.getVolume()));
         return list.get(0);
       }
     }
